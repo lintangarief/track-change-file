@@ -1,48 +1,12 @@
 require_relative 'diff_text'
 require 'json'
-require 'pry'
-require 'benchmark'
+require 'pathname'
+require 'filewatcher'
 
 class FileModify
   def initialize path
     @path = path
     @log_path = Dir.pwd + "/log.txt"
-  end
-
-  def track_file
-    captured_text = File.read(@path)
-    open(@path) do |file|
-      lstat_target_file = file.lstat
-      captured_new_file(format_file_Data(lstat_target_file, captured_text))
-
-      file.seek(0,
-        IO::SEEK_END)
-      case RUBY_PLATFORM
-      when /bsd/,
-          /darwin/
-        require 'rb-kqueue'
-        queue = KQueue::Queue.new
-        queue.watch_file(@path, :extend) do
-          yield file
-        end
-        queue.run
-      when /linux/
-        require 'rb-inotify'
-        queue = INotify::Notifier.new
-        queue.watch(@path, :modify) do
-          yield file.read
-        end
-        queue.run
-      else
-        loop do
-          changes = file.read
-          unless changes.empty?
-            yield changes
-          end
-          sleep 1.0
-        end
-      end
-    end
   end
 
   def captured_new_file file_data
@@ -88,21 +52,38 @@ class FileModify
       puts "File not found!"
       return
     end
+    captured
+    watch_file
 
-    track_file do |data|
-      file_lstat = data.lstat
-      text_in_current_target = File.read(data)
-      file_data = format_file_Data file_lstat, text_in_current_target
-      current_file_log = File.read(@log_path)
-      text_in_current_log = get_content_from_text current_file_log
+  end
 
-      if !compare_text text_in_current_log, text_in_current_target
-        open(@log_path, 'w') do |file|
-          file << format_new_data(current_file_log, file_data.to_json)
-          puts "Current Text Log : #{file_data[:content]}"
-        end
+  def captured
+    captured_text = File.read(@path)
+    open(@path) do |file|
+      lstat_target_file = file.lstat
+      captured_new_file(format_file_Data(lstat_target_file, captured_text))
+    end
+  end
+
+  def watch_file
+    FileWatcher.new("/Users/moka-arif/track-change-file/target.txt").watch do |data|
+      write_file_log data
+    end
+  end
+
+  def write_file_log data
+    file_data = File.open(data)
+    file_lstat =  file_data.lstat
+    text_in_current_target = file_data.read
+    result_format_file = format_file_Data file_lstat, text_in_current_target
+    current_file_log = File.read(@log_path)
+    text_in_current_log = get_content_from_text current_file_log
+
+    if !compare_text text_in_current_log, text_in_current_target
+      open(@log_path, 'w') do |file|
+        file << format_new_data(current_file_log, result_format_file.to_json)
+        puts "Current Text Log : #{result_format_file[:content]}"
       end
-
     end
   end
 end
